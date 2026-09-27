@@ -65,7 +65,9 @@ export class Trader {
   private inflight = new Map<string, Quote>();
   private simId = 0;
   /** One immutable log file per process run, so tests never mix with older sessions. */
-  private readonly eventFile = `data/events_${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`;
+  private readonly sessionId = new Date().toISOString().replace(/[:.]/g, "-");
+  private readonly eventFile = `data/events_${this.sessionId}.jsonl`;
+  private readonly fillFile = `data/fills_${this.sessionId}.jsonl`;
   private position = { mon: 0, costUsd: 0 }; // signed inventory and its cost basis
   private totals: Totals = { blocks: 0, decisions: 0, quotes: 0, fills: 0, reverted: 0, lateBlocks: 0, jevUsd: 0, gasMon: 0, gasUsd: 0, realizedUsd: 0, pnlUsd: 0, pnlMon: 0, pnlPct: 0 };
 
@@ -160,6 +162,7 @@ export class Trader {
     const byBlock = new Map<number, Fill[]>();
     for (const f of fills) {
       this.applyFill(f);
+      appendFileSync(this.fillFile, JSON.stringify(f) + "\n");
       const b = (f as Fill & { block: number }).block;
       byBlock.set(b, [...(byBlock.get(b) ?? []), f]);
     }
