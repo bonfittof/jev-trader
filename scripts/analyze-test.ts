@@ -58,6 +58,46 @@ const sellVwap = sellFillMon ? sellNotional / sellFillMon : 0;
 
 
 const rowByBlock = new Map<number, any>(rows.filter((r) => typeof r.block === "number").map((r) => [r.block, r]));
+
+type FillDiag = {
+  side: "buy" | "sell";
+  confidence: number;
+  spreadBps: number;
+  edge10: number | null;
+  edge20: number | null;
+};
+
+const fillDiagnostics: FillDiag[] = persistedFills.map((fill) => {
+  const b = Number(fill.block);
+  const row = rowByBlock.get(b);
+  const side = fill.side as "buy" | "sell";
+  const confidence = Number(row?.decision?.probabilities?.[side] ?? NaN);
+  const spreadBps = Number(row?.spreadBps ?? NaN);
+  const edgeAt = (h: number) => {
+    const future = rowByBlock.get(b + h);
+    if (!future || !Number.isFinite(Number(future.mid))) return null;
+    const px = Number(fill.price), mid = Number(future.mid), size = Number(fill.size ?? 0);
+    return (side === "buy" ? mid - px : px - mid) * size;
+  };
+  return { side, confidence, spreadBps, edge10: edgeAt(10), edge20: edgeAt(20) };
+});
+
+const summarizeDiag = (label: string, xs: FillDiag[]) => {
+  const edge = xs.map((x) => x.edge20).filter((x): x is number => x !== null);
+  const conf = xs.map((x) => x.confidence).filter(Number.isFinite);
+  const spreads = xs.map((x) => x.spreadBps).filter(Number.isFinite);
+  const avg = (v: number[]) => v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0;
+  const favorable = edge.length ? edge.filter((x) => x > 0).length / edge.length : 0;
+  console.log(`${label}: n=${xs.length} edge20=${avg(edge).toFixed(6)} favorable=${(favorable * 100).toFixed(1)}% avgConf=${avg(conf).toFixed(3)} avgSpread=${avg(spreads).toFixed(2)}bps`);
+};
+
+const confidenceBands = [
+  { label: "conf <0.55", lo: 0, hi: 0.55 },
+  { label: "conf 0.55-0.62", lo: 0.55, hi: 0.62 },
+  { label: "conf 0.62-0.70", lo: 0.62, hi: 0.70 },
+  { label: "conf >=0.70", lo: 0.70, hi: Infinity },
+];
+
 const horizons = [5, 10, 20, 100];
 const adverse = horizons.map((h) => {
   const vals: number[] = [];
@@ -105,6 +145,14 @@ console.log("Filled MON:", fillMon.toFixed(4));
 console.log("BUY fills:", buyFills.length, "/", buyFillMon.toFixed(4), "MON @", buyVwap.toFixed(6));
 console.log("SELL fills:", sellFills.length, "/", sellFillMon.toFixed(4), "MON @", sellVwap.toFixed(6));
 console.log("Fill rate / row:", fillRate.toFixed(3) + "%");
+if (fillDiagnostics.length) {
+  console.log("--- Fill diagnostics (edge measured 20 blocks after fill) ---");
+  summarizeDiag("BUY ", fillDiagnostics.filter((x) => x.side === "buy"));
+  summarizeDiag("SELL", fillDiagnostics.filter((x) => x.side === "sell"));
+  for (const band of confidenceBands) {
+    summarizeDiag(band.label, fillDiagnostics.filter((x) => Number.isFinite(x.confidence) && x.confidence >= band.lo && x.confidence < band.hi));
+  }
+}
 console.log("Inventory rows long/short/flat:", longRows, "/", shortRows, "/", flatRows);
 console.log("Rows at ~1000 MON cap:", capRows, "/", rows.length, "(" + (rows.length ? (capRows / rows.length * 100).toFixed(2) : "0.00") + "%)");
 for (const x of adverse) console.log(`Post-fill edge +${x.h} blocks: n=${x.n} avgUSD/fill=${x.avg.toFixed(6)} favorable=${(x.win * 100).toFixed(1)}%`);
