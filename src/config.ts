@@ -13,6 +13,10 @@ export const config = {
   dryRun: env("DRY_RUN") === "true" || !env("PRIVATE_KEY"),
   tradeSizeMon: Number(env("TRADE_SIZE_MON", "200")), // Kuru MON-USDC minimum order is 200 MON
   maxPositionMon: Number(env("MAX_POSITION_MON", "1000")),
+  /** Minimum model probability required to open fresh exposure. */
+  minConfidence: Number(env("MIN_CONFIDENCE", "0.55")),
+  /** Avoid replacing a same-side resting quote more often than this. */
+  minQuoteAgeBlocks: Number(env("MIN_QUOTE_AGE_BLOCKS", "5")),
   bankrollUsd: Number(env("BANKROLL_USD", "100")), // used for pnlPct
   /** Quote this many ticks inside the touch (0 = join the best bid/ask). Never crosses: clamps to the touch when the spread is too tight. */
   quoteInsideTicks: Number(env("QUOTE_INSIDE_TICKS", "1")),
