@@ -69,6 +69,8 @@ export class Trader {
   private readonly eventFile = `data/events_${this.sessionId}.jsonl`;
   private readonly fillFile = `data/fills_${this.sessionId}.jsonl`;
   private position = { mon: 0, costUsd: 0 }; // signed inventory and its cost basis
+  /** Block when the current non-flat inventory was first opened. */
+  private inventoryOpenedBlock: number | null = null;
   private totals: Totals = { blocks: 0, decisions: 0, quotes: 0, fills: 0, reverted: 0, lateBlocks: 0, jevUsd: 0, gasMon: 0, gasUsd: 0, realizedUsd: 0, pnlUsd: 0, pnlMon: 0, pnlPct: 0 };
 
   constructor(
@@ -111,12 +113,22 @@ export class Trader {
       const other: Side = wanted === "buy" ? "sell" : "buy";
       const confidence = Number(decision.probabilities[wanted] ?? 0);
       const strongEnough = confidence >= config.minConfidence;
-      // Weak signals do not create fresh exposure. If inventory is already open, a reducing
-      // quote is still allowed so the confidence gate cannot trap the strategy at the cap.
       const reducing = this.position.mon > 0 ? "sell" : this.position.mon < 0 ? "buy" : null;
+      const inventoryAge = this.inventoryOpenedBlock === null ? 0 : block - this.inventoryOpenedBlock;
+      const inventoryPressure =
+        Math.abs(this.position.mon) >= config.inventorySoftCapMon ||
+        (this.position.mon !== 0 && inventoryAge >= config.maxInventoryAgeBlocks);
+
+      // Once inventory reaches the soft cap (or has been open too long), stop increasing it.
+      // Only quote the reducing side until exposure returns inside the safe zone.
       let side: Side | null = null;
-      if (strongEnough) side = this.allowed(wanted, book) ? wanted : this.allowed(other, book) ? other : null;
-      else if (reducing && this.allowed(reducing, book)) side = reducing;
+      if (inventoryPressure && reducing) {
+        side = this.allowed(reducing, book) ? reducing : null;
+      } else if (strongEnough) {
+        side = this.allowed(wanted, book) ? wanted : this.allowed(other, book) ? other : null;
+      } else if (reducing && this.allowed(reducing, book)) {
+        side = reducing;
+      }
       this.totals.decisions++;
       this.totals.jevUsd += (decision.inputTokens / 1e6) * config.jevUsdPerMTok;
 
@@ -273,8 +285,15 @@ export class Trader {
       const remainder = signed - closing;
       p.costUsd += remainder * f.price; // any flip opens the other way
     }
+    const wasFlat = p.mon === 0;
     p.mon += signed;
-    if (Math.abs(p.mon) < 1e-9) { p.mon = 0; p.costUsd = 0; }
+    if (Math.abs(p.mon) < 1e-9) {
+      p.mon = 0;
+      p.costUsd = 0;
+      this.inventoryOpenedBlock = null;
+    } else if (wasFlat || (this.inventoryOpenedBlock === null)) {
+      this.inventoryOpenedBlock = (f as Fill & { block?: number }).block ?? this.totals.blocks;
+    }
     this.totals.fills++;
   }
 
