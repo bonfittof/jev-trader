@@ -1,9 +1,16 @@
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 
 const FILE = process.argv[2] ?? "data/test_200MON_clean.jsonl";
 
 const lines = readFileSync(FILE, "utf8").split("\n").filter(Boolean);
 const rows = lines.map((line) => JSON.parse(line));
+
+// New sessions persist fills separately because fills can arrive after the block event
+// has already been appended to the event log.
+const fillFile = FILE.replace(/\/events_([^/]+)\.jsonl$/, "/fills_$1.jsonl");
+const persistedFills = existsSync(fillFile)
+  ? readFileSync(fillFile, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line))
+  : [];
 
 let buys = 0, sells = 0, holds = 0;
 let fillEvents = 0, fillMon = 0;
@@ -35,6 +42,20 @@ for (const r of rows) {
   maxDrawdown = Math.max(maxDrawdown, peakPnl - pnl);
 }
 
+if (persistedFills.length) {
+  fillEvents = persistedFills.length;
+  fillMon = persistedFills.reduce((sum, f) => sum + Number(f.size ?? 0), 0);
+}
+
+const buyFills = persistedFills.filter((f) => f.side === "buy");
+const sellFills = persistedFills.filter((f) => f.side === "sell");
+const buyFillMon = buyFills.reduce((s, f) => s + Number(f.size ?? 0), 0);
+const sellFillMon = sellFills.reduce((s, f) => s + Number(f.size ?? 0), 0);
+const buyNotional = buyFills.reduce((s, f) => s + Number(f.size ?? 0) * Number(f.price ?? 0), 0);
+const sellNotional = sellFills.reduce((s, f) => s + Number(f.size ?? 0) * Number(f.price ?? 0), 0);
+const buyVwap = buyFillMon ? buyNotional / buyFillMon : 0;
+const sellVwap = sellFillMon ? sellNotional / sellFillMon : 0;
+
 const last = rows.at(-1);
 const totals = last?.totals ?? {};
 const finalPnl = Number(totals.pnlUsd ?? 0);
@@ -51,7 +72,10 @@ console.log("File:", FILE);
 console.log("Rows:", rows.length);
 console.log("BUY / SELL / HOLD:", buys, "/", sells, "/", holds);
 console.log("Fill events:", fillEvents);
+console.log("Fill log:", persistedFills.length ? fillFile : "legacy event-only session");
 console.log("Filled MON:", fillMon.toFixed(4));
+console.log("BUY fills:", buyFills.length, "/", buyFillMon.toFixed(4), "MON @", buyVwap.toFixed(6));
+console.log("SELL fills:", sellFills.length, "/", sellFillMon.toFixed(4), "MON @", sellVwap.toFixed(6));
 console.log("Fill rate / row:", fillRate.toFixed(3) + "%");
 console.log("Duration:", hours.toFixed(4), "hours");
 console.log("Realized P&L USD:", realized.toFixed(6));
