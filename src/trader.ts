@@ -109,14 +109,25 @@ export class Trader {
       const decision = await this.model.decide(this.buildState(block, book));
       const wanted: Side = decision.action === "sell" ? "sell" : "buy";
       const other: Side = wanted === "buy" ? "sell" : "buy";
-      // The position cap (and, live, margin funds) can only pick the reducing side. The probabilities still show the model's call.
-      const side: Side | null = this.allowed(wanted, book) ? wanted : this.allowed(other, book) ? other : null;
+      const confidence = Number(decision.probabilities[wanted] ?? 0);
+      const strongEnough = confidence >= config.minConfidence;
+      // Weak signals do not create fresh exposure. If inventory is already open, a reducing
+      // quote is still allowed so the confidence gate cannot trap the strategy at the cap.
+      const reducing = this.position.mon > 0 ? "sell" : this.position.mon < 0 ? "buy" : null;
+      let side: Side | null = null;
+      if (strongEnough) side = this.allowed(wanted, book) ? wanted : this.allowed(other, book) ? other : null;
+      else if (reducing && this.allowed(reducing, book)) side = reducing;
       this.totals.decisions++;
       this.totals.jevUsd += (decision.inputTokens / 1e6) * config.jevUsdPerMTok;
 
       let quote: Quote | null = null;
       if (side) {
         decision.action = side;
+        const sameSideFresh = [...this.orders.values()].some((o) => o.side === side && block - o.block < config.minQuoteAgeBlocks);
+        if (sameSideFresh) {
+          this.emit(block, book, decision, null, false, { readMs: Math.round(readMs), loopMs: Math.round(performance.now() - t0) });
+          return;
+        }
         const cancel = [...this.orders.keys()].filter((id) => id > 0); // simulated orders have negative ids
         quote = await this.market.send(block, side, config.tradeSizeMon, book, cancel, side !== wanted);
         this.totals.quotes++;
