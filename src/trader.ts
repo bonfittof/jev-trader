@@ -64,6 +64,8 @@ export class Trader {
   /** Live quotes sent but not yet confirmed; they may become resting orders, so they count toward the cap. */
   private inflight = new Map<string, Quote>();
   private simId = 0;
+  /** One immutable log file per process run, so tests never mix with older sessions. */
+  private readonly eventFile = `data/events_${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`;
   private position = { mon: 0, costUsd: 0 }; // signed inventory and its cost basis
   private totals: Totals = { blocks: 0, decisions: 0, quotes: 0, fills: 0, reverted: 0, lateBlocks: 0, jevUsd: 0, gasMon: 0, gasUsd: 0, realizedUsd: 0, pnlUsd: 0, pnlMon: 0, pnlPct: 0 };
 
@@ -75,6 +77,7 @@ export class Trader {
     private onQuote: (block: number, quote: Quote) => void = () => {},
   ) {
     mkdirSync("data", { recursive: true });
+    console.log(`session log · ${this.eventFile}`);
   }
 
   /** Call once the market params are known. Without it `trades` in the state is all zeros and no fills are ever seen. */
@@ -288,7 +291,7 @@ export class Trader {
     };
     this.history.push(event);
     if (this.history.length > config.historySize) this.history.shift();
-    appendFileSync("data/events.jsonl", JSON.stringify(event) + "\n");
+    appendFileSync(this.eventFile, JSON.stringify(event) + "\n");
     this.onEvent(event, timing);
   }
 }
