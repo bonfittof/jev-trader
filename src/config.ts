@@ -14,7 +14,7 @@ export const config = {
   tradeSizeMon: Number(env("TRADE_SIZE_MON", "200")), // Kuru MON-USDC minimum order is 200 MON
   maxPositionMon: Number(env("MAX_POSITION_MON", "1000")),
   /** Minimum model probability required to open fresh exposure. */
-  minConfidence: Number(env("MIN_CONFIDENCE", "0.55")),
+  minConfidence: Number(env("MIN_CONFIDENCE", "0.62")),
   /** Inventory controls: above soft cap, only inventory-reducing quotes are allowed. */
   inventorySoftCapMon: Number(env("INVENTORY_SOFT_CAP_MON", "400")),
   /** After this many blocks with an open position, force inventory-reducing quotes. */
@@ -23,7 +23,7 @@ export const config = {
   minQuoteAgeBlocks: Number(env("MIN_QUOTE_AGE_BLOCKS", "5")),
   bankrollUsd: Number(env("BANKROLL_USD", "100")), // used for pnlPct
   /** Quote this many ticks inside the touch (0 = join the best bid/ask). Never crosses: clamps to the touch when the spread is too tight. */
-  quoteInsideTicks: Number(env("QUOTE_INSIDE_TICKS", "1")),
+  quoteInsideTicks: Number(env("QUOTE_INSIDE_TICKS", "0")),
   /** Startup deposits into the Kuru margin account, topped up to these balances. Limit orders draw from margin, not the wallet. */
   marginMon: Number(env("MARGIN_MON", "600")),
   marginUsdc: Number(env("MARGIN_USDC", "20")),
