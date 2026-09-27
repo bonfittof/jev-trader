@@ -110,7 +110,6 @@ export class Trader {
 
       const decision = await this.model.decide(this.buildState(block, book));
       const wanted: Side = decision.action === "sell" ? "sell" : "buy";
-      const other: Side = wanted === "buy" ? "sell" : "buy";
       const confidence = Number(decision.probabilities[wanted] ?? 0);
       const strongEnough = confidence >= config.minConfidence;
       const reducing = this.position.mon > 0 ? "sell" : this.position.mon < 0 ? "buy" : null;
@@ -125,7 +124,9 @@ export class Trader {
       if (inventoryPressure && reducing) {
         side = this.allowed(reducing, book) ? reducing : null;
       } else if (strongEnough) {
-        side = this.allowed(wanted, book) ? wanted : this.allowed(other, book) ? other : null;
+        // Never open fresh exposure opposite to the model merely because the wanted side is capped.
+        // If the wanted side is unavailable, skip this quote and wait for a cleaner setup.
+        side = this.allowed(wanted, book) ? wanted : null;
       } else if (reducing && this.allowed(reducing, book)) {
         side = reducing;
       }
