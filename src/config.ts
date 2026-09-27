@@ -15,6 +15,10 @@ export const config = {
   maxPositionMon: Number(env("MAX_POSITION_MON", "1000")),
   /** Minimum model probability required to open fresh exposure. */
   minConfidence: Number(env("MIN_CONFIDENCE", "0.55")),
+  /** Inventory controls: above soft cap, only inventory-reducing quotes are allowed. */
+  inventorySoftCapMon: Number(env("INVENTORY_SOFT_CAP_MON", "400")),
+  /** After this many blocks with an open position, force inventory-reducing quotes. */
+  maxInventoryAgeBlocks: Number(env("MAX_INVENTORY_AGE_BLOCKS", "200")),
   /** Avoid replacing a same-side resting quote more often than this. */
   minQuoteAgeBlocks: Number(env("MIN_QUOTE_AGE_BLOCKS", "5")),
   bankrollUsd: Number(env("BANKROLL_USD", "100")), // used for pnlPct
