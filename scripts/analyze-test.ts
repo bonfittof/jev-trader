@@ -56,6 +56,34 @@ const sellNotional = sellFills.reduce((s, f) => s + Number(f.size ?? 0) * Number
 const buyVwap = buyFillMon ? buyNotional / buyFillMon : 0;
 const sellVwap = sellFillMon ? sellNotional / sellFillMon : 0;
 
+
+const rowByBlock = new Map<number, any>(rows.filter((r) => typeof r.block === "number").map((r) => [r.block, r]));
+const horizons = [5, 10, 20, 100];
+const adverse = horizons.map((h) => {
+  const vals: number[] = [];
+  for (const fill of persistedFills) {
+    const b = Number(fill.block);
+    const future = rowByBlock.get(b + h);
+    if (!future || !Number.isFinite(Number(future.mid))) continue;
+    const px = Number(fill.price), mid = Number(future.mid);
+    const signedMove = fill.side === "buy" ? mid - px : px - mid;
+    vals.push(signedMove * Number(fill.size ?? 0));
+  }
+  const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+  const win = vals.length ? vals.filter((v) => v > 0).length / vals.length : 0;
+  return { h, n: vals.length, avg, win };
+});
+
+let capRows = 0, longRows = 0, shortRows = 0, flatRows = 0;
+for (const r of rows) {
+  const size = Number(r.position?.size ?? 0);
+  const side = r.position?.side;
+  if (side === "long") longRows++;
+  else if (side === "short") shortRows++;
+  else flatRows++;
+  if (size >= 999.999) capRows++;
+}
+
 const last = rows.at(-1);
 const totals = last?.totals ?? {};
 const finalPnl = Number(totals.pnlUsd ?? 0);
@@ -77,6 +105,9 @@ console.log("Filled MON:", fillMon.toFixed(4));
 console.log("BUY fills:", buyFills.length, "/", buyFillMon.toFixed(4), "MON @", buyVwap.toFixed(6));
 console.log("SELL fills:", sellFills.length, "/", sellFillMon.toFixed(4), "MON @", sellVwap.toFixed(6));
 console.log("Fill rate / row:", fillRate.toFixed(3) + "%");
+console.log("Inventory rows long/short/flat:", longRows, "/", shortRows, "/", flatRows);
+console.log("Rows at ~1000 MON cap:", capRows, "/", rows.length, "(" + (rows.length ? (capRows / rows.length * 100).toFixed(2) : "0.00") + "%)");
+for (const x of adverse) console.log(`Post-fill edge +${x.h} blocks: n=${x.n} avgUSD/fill=${x.avg.toFixed(6)} favorable=${(x.win * 100).toFixed(1)}%`);
 console.log("Duration:", hours.toFixed(4), "hours");
 console.log("Realized P&L USD:", realized.toFixed(6));
 console.log("Gas:", gasUsd.toFixed(6), "USD /", gasMon.toFixed(6), "MON");
