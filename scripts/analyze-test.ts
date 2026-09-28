@@ -201,6 +201,15 @@ if (fillDiagnostics.length) {
   for (const band of confidenceBands) {
     summarizeDiag(band.label, fillDiagnostics.filter((x) => Number.isFinite(x.confidence) && x.confidence >= band.lo && x.confidence < band.hi));
   }
+  scanFeature("confidence", x => x.confidence, [0.55, 0.62, 0.70, 0.80, 0.90]);
+  scanFeature("spreadBps", x => x.spreadBps, [4, 5, 6, 7, 8, 10]);
+  scanFeature("bookImbalance", x => x.bookImbalance, [-0.50, -0.25, 0, 0.25, 0.50]);
+  scanFeature("ret1", x => x.ret1, [-5, -2, 0, 2, 5]);
+  scanFeature("ret5", x => x.ret5, [-10, -5, 0, 5, 10]);
+  scanFeature("ret20", x => x.ret20, [-20, -10, 0, 10, 20]);
+  scanFeature("ret100", x => x.ret100, [-50, -20, 0, 20, 50]);
+  scanFeature("cvdRatio", x => x.cvdRatio, [-0.50, -0.25, 0, 0.25, 0.50]);
+  scanCombined();
 }
 console.log("Inventory rows long/short/flat:", longRows, "/", shortRows, "/", flatRows);
 console.log("Rows at ~1000 MON cap:", capRows, "/", rows.length, "(" + (rows.length ? (capRows / rows.length * 100).toFixed(2) : "0.00") + "%)");
