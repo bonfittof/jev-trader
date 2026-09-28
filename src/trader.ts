@@ -137,7 +137,9 @@ export class Trader {
         // If the wanted side is unavailable, skip this quote and wait for a cleaner setup.
         side = this.allowed(wanted, book) ? wanted : null;
       } else if (reducing && this.allowed(reducing, book)) {
-        side = reducing;
+        // Weak-confidence inventory reduction was strongly adverse in the reliability run.
+        // Do not force a quote here; wait for either a model-supported reduction or hard inventory pressure.
+        side = null;
       }
       this.totals.decisions++;
       this.totals.jevUsd += (decision.inputTokens / 1e6) * config.jevUsdPerMTok;
