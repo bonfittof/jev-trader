@@ -14,6 +14,7 @@
  * The same logs tell us when one of OUR resting orders was hit: `makerAddress` is us. Those are
  * collected separately as maker fills (with `updatedSize` so a fully filled order can be dropped).
  */
+import { appendFileSync } from "node:fs";
 import { rpc } from "./chain";
 import { toFloat } from "./book";
 
@@ -58,18 +59,20 @@ export class TradeFeed {
   private fresh: TradePrint[] = []; // appended since the last drainPrints()
   private fills: MakerFill[] = []; // appended since the last drainFills()
   private inFlight = false;
+  private readonly printFile: string | null;
   lastBlock = 0;
 
   /**
    * `sizeDec` = log10(sizePrecision) (10 on MON-USDC). `priceDec` defaults to 18; override only if
    * Kuru changes the event. `maker` is our wallet: Trade logs with that makerAddress become fills.
    */
-  constructor(opts: { market: string; url: string; sizeDec: number; priceDec?: number; maker?: string | null }) {
+  constructor(opts: { market: string; url: string; sizeDec: number; priceDec?: number; maker?: string | null; printFile?: string | null }) {
     this.market = opts.market;
     this.url = opts.url;
     this.priceDec = opts.priceDec ?? TRADE_PRICE_DEC;
     this.sizeDec = opts.sizeDec;
     this.maker = opts.maker?.toLowerCase() ?? null;
+    this.printFile = opts.printFile ?? null;
   }
 
   /**
@@ -93,17 +96,19 @@ export class TradeFeed {
           fromBlock: "0x" + from.toString(16),
           toBlock: "0x" + to.toString(16),
         }], this.url);
+        if (this.printFile) appendFileSync(this.printFile, JSON.stringify({ kind: "range", from, to, ok: true, count: logs.length, ts: Date.now() }) + "\n");
         // getLogs returns in block/logIndex order; keep newest last.
         for (const log of logs) {
           if (log.removed) continue;
           const t = this.decode(log, !first); // the warm-up window predates our orders: no fills from it
-          if (t) { this.trades.push(t); this.fresh.push(t); }
+          if (t) { this.trades.push(t); this.fresh.push(t); if (this.printFile) appendFileSync(this.printFile, JSON.stringify({ kind: "print", ...t, txHash: log.transactionHash, logIndex: parseInt(log.logIndex, 16) }) + "\n"); }
         }
         if (this.trades.length > RING) this.trades.splice(0, this.trades.length - RING);
         this.lastBlock = to;
         from = to + 1;
       }
-    } catch {
+    } catch (e) {
+      if (this.printFile) appendFileSync(this.printFile, JSON.stringify({ kind: "error", from, to: block, message: (e as Error).message, ts: Date.now() }) + "\n");
       // lastBlock stays at the last fully fetched chunk; next poll retries from there
     } finally {
       this.inFlight = false;
