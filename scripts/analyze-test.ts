@@ -79,7 +79,7 @@ const fillDiagnostics: FillDiag[] = persistedFills.map((fill) => {
     const px = Number(fill.price), mid = Number(future.mid), size = Number(fill.size ?? 0);
     return (side === "buy" ? mid - px : px - mid) * size;
   };
-  return { side, confidence, spreadBps, edge10: edgeAt(10), edge20: edgeAt(20) };
+  return { side, confidence, spreadBps, bookImbalance, ret1, ret5, ret20, ret100, cvdRatio, edge10: edgeAt(10), edge20: edgeAt(20) };
 });
 
 const summarizeDiag = (label: string, xs: FillDiag[]) => {
@@ -89,6 +89,42 @@ const summarizeDiag = (label: string, xs: FillDiag[]) => {
   const avg = (v: number[]) => v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0;
   const favorable = edge.length ? edge.filter((x) => x > 0).length / edge.length : 0;
   console.log(`${label}: n=${xs.length} edge20=${avg(edge).toFixed(6)} favorable=${(favorable * 100).toFixed(1)}% avgConf=${avg(conf).toFixed(3)} avgSpread=${avg(spreads).toFixed(2)}bps`);
+};
+
+const scanFeature = (label: string, value: (x: FillDiag) => number, cuts: number[]) => {
+  console.log(`--- ${label} scan (edge20) ---`);
+  for (const cut of cuts) {
+    for (const [op, test] of [
+      [">=", (v: number) => v >= cut],
+      ["<=", (v: number) => v <= cut],
+    ] as const) {
+      const xs = fillDiagnostics.filter((x) => Number.isFinite(value(x)) && test(value(x)));
+      if (xs.length < 30) continue;
+      summarizeDiag(`${label} ${op} ${cut}`, xs);
+    }
+  }
+};
+
+const scanCombined = () => {
+  console.log("--- Candidate pre-fill filters (edge20) ---");
+  const candidates: [string, (x: FillDiag) => boolean][] = [
+    ["BUY only", x => x.side === "buy"],
+    ["SELL only", x => x.side === "sell"],
+    ["BUY conf>=.62", x => x.side === "buy" && x.confidence >= 0.62],
+    ["SELL conf>=.62", x => x.side === "sell" && x.confidence >= 0.62],
+    ["BUY flow>=0", x => x.side === "buy" && x.cvdRatio >= 0],
+    ["SELL flow<=0", x => x.side === "sell" && x.cvdRatio <= 0],
+    ["BUY ret20>=0", x => x.side === "buy" && x.ret20 >= 0],
+    ["SELL ret20<=0", x => x.side === "sell" && x.ret20 <= 0],
+    ["BUY flow+ret20", x => x.side === "buy" && x.cvdRatio >= 0 && x.ret20 >= 0],
+    ["SELL flow+ret20", x => x.side === "sell" && x.cvdRatio <= 0 && x.ret20 <= 0],
+    ["BUY flow+ret20+imb", x => x.side === "buy" && x.cvdRatio >= 0 && x.ret20 >= 0 && x.bookImbalance >= 0],
+    ["SELL flow+ret20+imb", x => x.side === "sell" && x.cvdRatio <= 0 && x.ret20 <= 0 && x.bookImbalance <= 0],
+  ];
+  for (const [label, test] of candidates) {
+    const xs = fillDiagnostics.filter(test);
+    if (xs.length >= 20) summarizeDiag(label, xs);
+  }
 };
 
 const confidenceBands = [
