@@ -43,7 +43,8 @@ const diags:D[] = fills.map((fill:any) => {
   const placementBlock = Number.isFinite(fill.placementBlock) ? Number(fill.placementBlock) : Number.isFinite(placement?.block) ? Number(placement.block) : null;
   const features = fill.placementFeatures ?? placement?.features ?? placement;
   if (placementBlock===null) missingPlacement++;
-  const hasFeatureContext = !!features && (features.returnsBps !== undefined || features.bookImbalance !== undefined || features.trades !== undefined);\n  if (!hasFeatureContext) missingFeatures++;
+  const hasFeatureContext = !!features && (features.returnsBps !== undefined || features.bookImbalance !== undefined || features.trades !== undefined);
+  if (!hasFeatureContext) missingFeatures++;
   const probs = fill.placementConfidence ?? placement?.decision?.probabilities?.[side];
   const tr = features?.trades ?? {};
   const buy=Number(tr.buyMon ?? 0), sell=Number(tr.sellMon ?? 0), den=buy+sell;
