@@ -11,6 +11,8 @@ export interface BlockEvent {
   bestBid: number;
   bestAsk: number;
   spreadBps: number;
+  /** Exact feature snapshot passed to the model for this block. */
+  features?: TradeState;
   decision: { action: Action; probabilities: Record<Action, number>; upIn10: number; latencyMs: number; late: boolean } | null;
   /** The order this block put on the book. */
   quote: Quote | null;
@@ -41,7 +43,7 @@ export interface Totals {
   pnlPct: number;
 }
 
-interface Resting { side: Side; price: number; size: number; block: number }
+interface Resting { side: Side; price: number; size: number; block: number; reason?: "signal" | "reduce_pressure" | "reduce_weak"; confidence?: number; features?: TradeState; positionBefore?: number; queueAhead?: number }
 
 /**
  * Every block: read the book, ask the model buy or sell, and post one post-only limit order on
@@ -68,6 +70,9 @@ export class Trader {
   private readonly sessionId = new Date().toISOString().replace(/[:.]/g, "-");
   private readonly eventFile = `data/events_${this.sessionId}.jsonl`;
   private readonly fillFile = `data/fills_${this.sessionId}.jsonl`;
+  private readonly printFile = `data/prints_${this.sessionId}.jsonl`;
+  private readonly sessionFile = `data/session_${this.sessionId}.json`;
+  private states = new Map<number, TradeState>();
   private position = { mon: 0, costUsd: 0 }; // signed inventory and its cost basis
   /** Block when the current non-flat inventory was first opened. */
   private inventoryOpenedBlock: number | null = null;
@@ -81,12 +86,13 @@ export class Trader {
     private onQuote: (block: number, quote: Quote) => void = () => {},
   ) {
     mkdirSync("data", { recursive: true });
+    appendFileSync(this.sessionFile, JSON.stringify({ sessionId: this.sessionId, startedAt: new Date().toISOString(), dryRun: config.dryRun, market: config.market, tradeSizeMon: config.tradeSizeMon, maxPositionMon: config.maxPositionMon, minConfidence: config.minConfidence, quoteInsideTicks: config.quoteInsideTicks, simLatencyBlocks: config.simLatencyBlocks, simQueue: config.simQueue, makerFeeBps: config.makerFeeBps }, null, 2));
     console.log(`session log · ${this.eventFile}`);
   }
 
   /** Call once the market params are known. Without it `trades` in the state is all zeros and no fills are ever seen. */
   attachTradeFeed(sizeDec: number) {
-    this.trades = new TradeFeed({ market: config.market, url: config.readRpcUrl, sizeDec, maker: this.market.address });
+    this.trades = new TradeFeed({ market: config.market, url: config.readRpcUrl, sizeDec, maker: this.market.address, printFile: this.printFile });
   }
 
   async onBlock(block: number) {
@@ -108,7 +114,10 @@ export class Trader {
       if (this.mids.length > 400) this.mids.shift();
       this.trades?.poll(block).then(() => this.harvest()); // off the hot path: eth_getLogs for prints (and our fills) since the last poll
 
-      const decision = await this.model.decide(this.buildState(block, book));
+      const state = this.buildState(block, book);
+      this.states.set(block, state);
+      if (this.states.size > config.historySize * 2) this.states.delete(this.states.keys().next().value!);
+      const decision = await this.model.decide(state);
       const wanted: Side = decision.action === "sell" ? "sell" : "buy";
       const confidence = Number(decision.probabilities[wanted] ?? 0);
       const strongEnough = confidence >= config.minConfidence;
@@ -146,7 +155,9 @@ export class Trader {
         this.totals.quotes++;
         if (quote.status === "sim") {
           this.orders.clear(); // the simulated cancel
-          this.orders.set(--this.simId, { side, price: quote.price, size: quote.size, block });
+          const reason: Resting["reason"] = side === wanted ? "signal" : inventoryPressure ? "reduce_pressure" : "reduce_weak";
+          const level = (side === "buy" ? book.levels.bids : book.levels.asks).find(([px]) => Math.abs(px - quote!.price) < 1e-12);
+          this.orders.set(--this.simId, { side, price: quote.price, size: quote.size, block, reason, confidence, features: state, positionBefore: this.position.mon, queueAhead: config.simQueue ? Number(level?.[1] ?? 0) : 0 });
         } else if (quote.txHash) {
           this.inflight.set(quote.txHash, quote);
         }
@@ -204,7 +215,7 @@ export class Trader {
       const o = this.orders.get(f.orderId);
       if (f.updatedSize <= 0) this.orders.delete(f.orderId);
       else if (o) o.size = f.updatedSize;
-      out.push({ side: f.side, size: f.size, price: f.price, txHash: f.txHash, orderId: f.orderId, simulated: false, block: f.block });
+      out.push({ side: f.side, size: f.size, price: f.price, txHash: f.txHash, orderId: f.orderId, simulated: false, block: f.block, placementBlock: o?.block ?? null, orderAgeBlocks: o ? f.block - o.block : null, reason: o?.reason ?? null, placementConfidence: o?.confidence ?? null, placementFeatures: o?.features ?? null, positionBefore: o?.positionBefore ?? null });
     }
     return out;
   }
@@ -217,13 +228,20 @@ export class Trader {
     const out: (Fill & { block: number })[] = [];
     for (const p of prints) {
       for (const [id, o] of this.orders) {
-        if (p.block <= o.block || o.size <= 0) continue;
+        if (p.block < o.block + config.simLatencyBlocks || o.size <= 0) continue;
         const hit = o.side === "buy" ? p.side === "sell" && p.price <= o.price : p.side === "buy" && p.price >= o.price;
         if (!hit) continue;
-        const size = Math.min(o.size, p.size);
+        let available = p.size;
+        if (config.simQueue && (o.queueAhead ?? 0) > 0) {
+          const consumed = Math.min(o.queueAhead ?? 0, available);
+          o.queueAhead = Math.max(0, (o.queueAhead ?? 0) - consumed);
+          available -= consumed;
+        }
+        if (available <= 0) continue;
+        const size = Math.min(o.size, available);
         o.size -= size;
         if (o.size <= 1e-9) this.orders.delete(id);
-        out.push({ side: o.side, size, price: o.price, txHash: null, orderId: id, simulated: true, block: p.block });
+        out.push({ side: o.side, size, price: o.price, txHash: null, orderId: id, simulated: true, block: p.block, placementBlock: o.block, orderAgeBlocks: p.block - o.block, reason: o.reason ?? null, placementConfidence: o.confidence ?? null, placementFeatures: o.features ?? null, positionBefore: o.positionBefore ?? null } as Fill & { block: number });
       }
     }
     return out;
@@ -310,7 +328,7 @@ export class Trader {
     t.pnlPct = (t.pnlUsd / config.bankrollUsd) * 100;
     const size = Math.abs(this.position.mon);
     const event: BlockEvent = {
-      block, ts: Date.now(), mid: book.mid, bestBid: book.bid, bestAsk: book.ask, spreadBps: round(book.spreadBps, 2),
+      block, ts: Date.now(), mid: book.mid, bestBid: book.bid, bestAsk: book.ask, spreadBps: round(book.spreadBps, 2), features: this.states.get(block),
       decision: late
         ? { action: "hold", probabilities: { buy: 0, sell: 0, hold: 1 }, upIn10: 0.5, latencyMs: 0, late: true }
         : decision && { action: decision.action, probabilities: decision.probabilities, upIn10: decision.upIn10, latencyMs: Math.round(decision.latencyMs), late: false },
