@@ -294,6 +294,7 @@ export class Trader {
     if (f.size <= 0) return;
     const signed = f.side === "buy" ? f.size : -f.size;
     const p = this.position;
+    const beforeMon = p.mon;
     if (p.mon === 0 || Math.sign(p.mon) === Math.sign(signed)) {
       p.costUsd += signed * f.price; // adding to position
     } else {
@@ -310,7 +311,8 @@ export class Trader {
       p.mon = 0;
       p.costUsd = 0;
       this.inventoryOpenedBlock = null;
-    } else if (wasFlat || (this.inventoryOpenedBlock === null)) {
+    } else if (wasFlat || this.inventoryOpenedBlock === null || Math.sign(beforeMon) !== Math.sign(p.mon)) {
+      // A position flip starts a new inventory episode; age must restart from this fill.
       this.inventoryOpenedBlock = (f as Fill & { block?: number }).block ?? this.totals.blocks;
     }
     this.totals.fills++;
