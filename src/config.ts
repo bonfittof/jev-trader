@@ -21,6 +21,12 @@ export const config = {
   maxInventoryAgeBlocks: Number(env("MAX_INVENTORY_AGE_BLOCKS", "200")),
   /** Avoid replacing a same-side resting quote more often than this. */
   minQuoteAgeBlocks: Number(env("MIN_QUOTE_AGE_BLOCKS", "5")),
+  /** Dry-run realism: blocks before a simulated order can be filled. */
+  simLatencyBlocks: Number(env("SIM_LATENCY_BLOCKS", "1")),
+  /** When true, simulated fills respect visible size already queued at our price. */
+  simQueue: env("SIM_QUEUE", "false") === "true",
+  /** Analyzer scenario only; Kuru maker fee/rebate in basis points. */
+  makerFeeBps: Number(env("MAKER_FEE_BPS", "0")),
   bankrollUsd: Number(env("BANKROLL_USD", "100")), // used for pnlPct
   /** Quote this many ticks inside the touch (0 = join the best bid/ask). Never crosses: clamps to the touch when the spread is too tight. */
   quoteInsideTicks: Number(env("QUOTE_INSIDE_TICKS", "0")),
