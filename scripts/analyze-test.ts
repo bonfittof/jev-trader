@@ -2,14 +2,16 @@ import { existsSync, readFileSync } from "fs";
 
 const FILE = process.argv[2] ?? "data/test_200MON_clean.jsonl";
 
-const lines = readFileSync(FILE, "utf8").split("\n").filter(Boolean);
+const lines = readFileSync(FILE, "utf8").split("
+").filter(Boolean);
 const rows = lines.map((line) => JSON.parse(line));
 
 // New sessions persist fills separately because fills can arrive after the block event
 // has already been appended to the event log.
 const fillFile = FILE.replace(/\/events_([^/]+)\.jsonl$/, "/fills_$1.jsonl");
 const persistedFills = existsSync(fillFile)
-  ? readFileSync(fillFile, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line))
+  ? readFileSync(fillFile, "utf8").split("
+").filter(Boolean).map((line) => JSON.parse(line))
   : [];
 
 let buys = 0, sells = 0, holds = 0;
@@ -68,7 +70,8 @@ type FillDiag = {
   ret5: number;
   ret20: number;
   ret100: number;
-  cvdRatio: number;\n  edge10: number | null;
+  cvdRatio: number;
+  edge10: number | null;
   edge20: number | null;
 };
 
@@ -77,7 +80,13 @@ const fillDiagnostics: FillDiag[] = persistedFills.map((fill) => {
   const row = rowByBlock.get(b);
   const side = fill.side as "buy" | "sell";
   const confidence = Number(row?.decision?.probabilities?.[side] ?? NaN);
-  const spreadBps = Number(row?.spreadBps ?? NaN);\n  const bookImbalance = Number(row?.bookImbalance ?? NaN);\n  const ret1 = Number(row?.returnsBps?.last1 ?? NaN);\n  const ret5 = Number(row?.returnsBps?.last5 ?? NaN);\n  const ret20 = Number(row?.returnsBps?.last20 ?? NaN);\n  const ret100 = Number(row?.returnsBps?.last100 ?? NaN);\n  const cvdRatio = Number(row?.trades?.cvdRatio ?? NaN);
+  const spreadBps = Number(row?.spreadBps ?? NaN);
+  const bookImbalance = Number(row?.bookImbalance ?? NaN);
+  const ret1 = Number(row?.returnsBps?.last1 ?? NaN);
+  const ret5 = Number(row?.returnsBps?.last5 ?? NaN);
+  const ret20 = Number(row?.returnsBps?.last20 ?? NaN);
+  const ret100 = Number(row?.returnsBps?.last100 ?? NaN);
+  const cvdRatio = Number(row?.trades?.cvdRatio ?? NaN);
   const edgeAt = (h: number) => {
     const future = rowByBlock.get(b + h);
     if (!future || !Number.isFinite(Number(future.mid))) return null;
@@ -176,7 +185,8 @@ const fillRate = rows.length ? (fillEvents / rows.length) * 100 : 0;
 const pnlPerFill = fillEvents ? finalPnl / fillEvents : 0;
 const pnlPerHour = hours > 0 ? finalPnl / hours : 0;
 
-console.log("\n=== JEV TEST ANALYSIS ===");
+console.log("
+=== JEV TEST ANALYSIS ===");
 console.log("File:", FILE);
 console.log("Rows:", rows.length);
 console.log("BUY / SELL / HOLD:", buys, "/", sells, "/", holds);
@@ -206,4 +216,5 @@ console.log("Max drawdown USD:", maxDrawdown.toFixed(6));
 console.log("Final NET P&L USD:", finalPnl.toFixed(6));
 console.log("Net P&L / fill USD:", pnlPerFill.toFixed(6));
 console.log("Net P&L / hour USD:", pnlPerHour.toFixed(6));
-console.log("=========================\n");
+console.log("=========================
+");
