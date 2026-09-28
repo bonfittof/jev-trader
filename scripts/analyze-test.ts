@@ -63,7 +63,7 @@ type FillDiag = {
   side: "buy" | "sell";
   confidence: number;
   spreadBps: number;
-  edge10: number | null;
+  bookImbalance: number;\n  ret1: number;\n  ret5: number;\n  ret20: number;\n  ret100: number;\n  cvdRatio: number;\n  edge10: number | null;
   edge20: number | null;
 };
 
@@ -72,7 +72,7 @@ const fillDiagnostics: FillDiag[] = persistedFills.map((fill) => {
   const row = rowByBlock.get(b);
   const side = fill.side as "buy" | "sell";
   const confidence = Number(row?.decision?.probabilities?.[side] ?? NaN);
-  const spreadBps = Number(row?.spreadBps ?? NaN);
+  const spreadBps = Number(row?.spreadBps ?? NaN);\n  const bookImbalance = Number(row?.bookImbalance ?? NaN);\n  const ret1 = Number(row?.returnsBps?.last1 ?? NaN);\n  const ret5 = Number(row?.returnsBps?.last5 ?? NaN);\n  const ret20 = Number(row?.returnsBps?.last20 ?? NaN);\n  const ret100 = Number(row?.returnsBps?.last100 ?? NaN);\n  const cvdRatio = Number(row?.trades?.cvdRatio ?? NaN);
   const edgeAt = (h: number) => {
     const future = rowByBlock.get(b + h);
     if (!future || !Number.isFinite(Number(future.mid))) return null;
