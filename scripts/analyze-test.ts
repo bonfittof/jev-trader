@@ -1,227 +1,129 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const FILE = process.argv[2] ?? "data/test_200MON_clean.jsonl";
+const MAKER_FEE_BPS = Number(process.env.MAKER_FEE_BPS ?? "0");
+const CLUSTER_BLOCKS = 600;
 
-const lines = readFileSync(FILE, "utf8").split(String.fromCharCode(10)).filter(Boolean);
-const rows = lines.map((line) => JSON.parse(line));
-
-// New sessions persist fills separately because fills can arrive after the block event
-// has already been appended to the event log.
+const parseJsonl = (path: string) => readFileSync(path, "utf8").split("\n").filter(Boolean).map((x) => JSON.parse(x));
+const rows = parseJsonl(FILE);
+if (!rows.length) throw new Error("Empty event file: " + FILE);
 const fillFile = FILE.replace(/\/events_([^/]+)\.jsonl$/, "/fills_$1.jsonl");
-const persistedFills = existsSync(fillFile)
-  ? readFileSync(fillFile, "utf8").split(String.fromCharCode(10)).filter(Boolean).map((line) => JSON.parse(line))
-  : [];
+const fills = existsSync(fillFile) ? parseJsonl(fillFile) : rows.filter((r) => r.fill).map((r) => ({ ...r.fill, block: r.block }));
+const rowByBlock = new Map<number, any>(rows.filter((r) => Number.isFinite(r.block)).map((r) => [Number(r.block), r]));
+const ordered = rows.filter((r) => Number.isFinite(r.block) && Number.isFinite(r.mid)).sort((a,b) => a.block-b.block);
 
-let buys = 0, sells = 0, holds = 0;
-let fillEvents = 0, fillMon = 0;
-let minPnl = Infinity, maxPnl = -Infinity, maxDrawdown = 0, peakPnl = -Infinity;
-let firstTs: number | null = null, lastTs: number | null = null;
-
-for (const r of rows) {
-  const action = r.decision?.action;
-  if (action === "buy") buys++;
-  if (action === "sell") sells++;
-  if (action === "hold") holds++;
-
-  if (r.fill) {
-    fillEvents++;
-    fillMon += Number(r.fill.size ?? 0);
-  }
-
-  if (typeof r.ts === "number") {
-    firstTs ??= r.ts;
-    lastTs = r.ts;
-  }
-
-  // totals.pnlUsd already includes realized + unrealized - gas.
-  // Do NOT add realizedUsd again.
-  const pnl = Number(r.totals?.pnlUsd ?? 0);
-  minPnl = Math.min(minPnl, pnl);
-  maxPnl = Math.max(maxPnl, pnl);
-  peakPnl = Math.max(peakPnl, pnl);
-  maxDrawdown = Math.max(maxDrawdown, peakPnl - pnl);
-}
-
-if (persistedFills.length) {
-  fillEvents = persistedFills.length;
-  fillMon = persistedFills.reduce((sum, f) => sum + Number(f.size ?? 0), 0);
-}
-
-const buyFills = persistedFills.filter((f) => f.side === "buy");
-const sellFills = persistedFills.filter((f) => f.side === "sell");
-const buyFillMon = buyFills.reduce((s, f) => s + Number(f.size ?? 0), 0);
-const sellFillMon = sellFills.reduce((s, f) => s + Number(f.size ?? 0), 0);
-const buyNotional = buyFills.reduce((s, f) => s + Number(f.size ?? 0) * Number(f.price ?? 0), 0);
-const sellNotional = sellFills.reduce((s, f) => s + Number(f.size ?? 0) * Number(f.price ?? 0), 0);
-const buyVwap = buyFillMon ? buyNotional / buyFillMon : 0;
-const sellVwap = sellFillMon ? sellNotional / sellFillMon : 0;
-
-
-const rowByBlock = new Map<number, any>(rows.filter((r) => typeof r.block === "number").map((r) => [r.block, r]));
-
-type FillDiag = {
-  side: "buy" | "sell";
-  confidence: number;
-  spreadBps: number;
-  bookImbalance: number;
-  ret1: number;
-  ret5: number;
-  ret20: number;
-  ret100: number;
-  cvdRatio: number;
-  edge10: number | null;
-  edge20: number | null;
+const avg = (xs: number[]) => xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : NaN;
+const pct = (x: number) => (100*x).toFixed(1)+"%";
+const fmt = (x: number, d=4) => Number.isFinite(x) ? x.toFixed(d) : "n/a";
+const nearestAtOrAfter = (target: number) => {
+  let lo=0, hi=ordered.length-1, ans:any=null;
+  while(lo<=hi){ const m=(lo+hi)>>1; if(ordered[m].block>=target){ans=ordered[m];hi=m-1}else lo=m+1; }
+  return ans;
 };
 
-const fillDiagnostics: FillDiag[] = persistedFills.map((fill) => {
-  const b = Number(fill.block);
-  const row = rowByBlock.get(b);
-  const side = fill.side as "buy" | "sell";
-  const confidence = Number(row?.decision?.probabilities?.[side] ?? NaN);
-  const spreadBps = Number(row?.spreadBps ?? NaN);
-  const bookImbalance = Number(row?.bookImbalance ?? NaN);
-  const ret1 = Number(row?.returnsBps?.last1 ?? NaN);
-  const ret5 = Number(row?.returnsBps?.last5 ?? NaN);
-  const ret20 = Number(row?.returnsBps?.last20 ?? NaN);
-  const ret100 = Number(row?.returnsBps?.last100 ?? NaN);
-  const cvdRatio = Number(row?.trades?.cvdRatio ?? NaN);
-  const edgeAt = (h: number) => {
-    const future = rowByBlock.get(b + h);
-    if (!future || !Number.isFinite(Number(future.mid))) return null;
-    const px = Number(fill.price), mid = Number(future.mid), size = Number(fill.size ?? 0);
-    return (side === "buy" ? mid - px : px - mid) * size;
+// Reconstruct placement rows for legacy dry-runs: simulated ids are -1, -2, ... in quote order.
+const placementByOrder = new Map<number, any>();
+let simId=0;
+for (const r of ordered) {
+  if (r.quote?.status === "sim") placementByOrder.set(--simId, r);
+  if (Number.isFinite(r.quote?.orderId)) placementByOrder.set(Number(r.quote.orderId), r);
+}
+
+type D = {
+  side:"buy"|"sell"; block:number; placementBlock:number|null; age:number|null; reason:string;
+  confidence:number; spread:number; imbalance:number; ret1:number; ret5:number; ret20:number; ret100:number; cvdRatio:number;
+  size:number; price:number; placementMid:number; captureBps:number;
+  m5:number|null;m10:number|null;m20:number|null;m100:number|null;
+};
+
+let missingPlacement=0, missingFeatures=0;
+const diags:D[] = fills.map((fill:any) => {
+  const side=fill.side as "buy"|"sell";
+  const placement = fill.placementFeatures ? null : placementByOrder.get(Number(fill.orderId));
+  const placementBlock = Number.isFinite(fill.placementBlock) ? Number(fill.placementBlock) : Number.isFinite(placement?.block) ? Number(placement.block) : null;
+  const features = fill.placementFeatures ?? placement?.features ?? placement;
+  if (placementBlock===null) missingPlacement++;
+  if (!features) missingFeatures++;
+  const probs = fill.placementConfidence ?? placement?.decision?.probabilities?.[side];
+  const tr = features?.trades ?? {};
+  const buy=Number(tr.buyMon ?? 0), sell=Number(tr.sellMon ?? 0), den=buy+sell;
+  const cvdRatio = Number.isFinite(Number(tr.cvdRatio)) ? Number(tr.cvdRatio) : den>0 ? (buy-sell)/den : NaN;
+  const placementMid=Number(features?.mid ?? placement?.mid ?? NaN);
+  const price=Number(fill.price), size=Number(fill.size ?? 0);
+  const captureBps = Number.isFinite(placementMid) && price>0 ? (side==="buy" ? placementMid-price : price-placementMid)/price*1e4 : NaN;
+  const mark=(h:number)=>{
+    const future=nearestAtOrAfter(Number(fill.block)+h);
+    if(!future || !Number.isFinite(price) || price<=0) return null;
+    return (side==="buy" ? Number(future.mid)-price : price-Number(future.mid))/price*1e4;
   };
-  return { side, confidence, spreadBps, bookImbalance, ret1, ret5, ret20, ret100, cvdRatio, edge10: edgeAt(10), edge20: edgeAt(20) };
+  return {
+    side, block:Number(fill.block), placementBlock, age:placementBlock===null?null:Number(fill.block)-placementBlock,
+    reason:String(fill.reason ?? (placement && placement.decision?.action===side ? "legacy/unknown" : "legacy/unknown")),
+    confidence:Number(probs ?? NaN), spread:Number(features?.spreadBps ?? placement?.spreadBps ?? NaN),
+    imbalance:Number(features?.bookImbalance ?? NaN), ret1:Number(features?.returnsBps?.last1 ?? NaN),
+    ret5:Number(features?.returnsBps?.last5 ?? NaN), ret20:Number(features?.returnsBps?.last20 ?? NaN),
+    ret100:Number(features?.returnsBps?.last100 ?? NaN), cvdRatio, size, price, placementMid, captureBps,
+    m5:mark(5),m10:mark(10),m20:mark(20),m100:mark(100)
+  };
 });
 
-const summarizeDiag = (label: string, xs: FillDiag[]) => {
-  const edge = xs.map((x) => x.edge20).filter((x): x is number => x !== null);
-  const conf = xs.map((x) => x.confidence).filter(Number.isFinite);
-  const spreads = xs.map((x) => x.spreadBps).filter(Number.isFinite);
-  const avg = (v: number[]) => v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0;
-  const favorable = edge.length ? edge.filter((x) => x > 0).length / edge.length : 0;
-  console.log(`${label}: n=${xs.length} edge20=${avg(edge).toFixed(6)} favorable=${(favorable * 100).toFixed(1)}% avgConf=${avg(conf).toFixed(3)} avgSpread=${avg(spreads).toFixed(2)}bps`);
-};
-
-const scanFeature = (label: string, value: (x: FillDiag) => number, cuts: number[]) => {
-  console.log(`--- ${label} scan (edge20) ---`);
-  for (const cut of cuts) {
-    for (const [op, test] of [
-      [">=", (v: number) => v >= cut],
-      ["<=", (v: number) => v <= cut],
-    ] as const) {
-      const xs = fillDiagnostics.filter((x) => Number.isFinite(value(x)) && test(value(x)));
-      if (xs.length < 30) continue;
-      summarizeDiag(`${label} ${op} ${cut}`, xs);
-    }
-  }
-};
-
-const scanCombined = () => {
-  console.log("--- Candidate pre-fill filters (edge20) ---");
-  const candidates: [string, (x: FillDiag) => boolean][] = [
-    ["BUY only", x => x.side === "buy"],
-    ["SELL only", x => x.side === "sell"],
-    ["BUY conf>=.62", x => x.side === "buy" && x.confidence >= 0.62],
-    ["SELL conf>=.62", x => x.side === "sell" && x.confidence >= 0.62],
-    ["BUY flow>=0", x => x.side === "buy" && x.cvdRatio >= 0],
-    ["SELL flow<=0", x => x.side === "sell" && x.cvdRatio <= 0],
-    ["BUY ret20>=0", x => x.side === "buy" && x.ret20 >= 0],
-    ["SELL ret20<=0", x => x.side === "sell" && x.ret20 <= 0],
-    ["BUY flow+ret20", x => x.side === "buy" && x.cvdRatio >= 0 && x.ret20 >= 0],
-    ["SELL flow+ret20", x => x.side === "sell" && x.cvdRatio <= 0 && x.ret20 <= 0],
-    ["BUY flow+ret20+imb", x => x.side === "buy" && x.cvdRatio >= 0 && x.ret20 >= 0 && x.bookImbalance >= 0],
-    ["SELL flow+ret20+imb", x => x.side === "sell" && x.cvdRatio <= 0 && x.ret20 <= 0 && x.bookImbalance <= 0],
-  ];
-  for (const [label, test] of candidates) {
-    const xs = fillDiagnostics.filter(test);
-    if (xs.length >= 20) summarizeDiag(label, xs);
-  }
-};
-
-const confidenceBands = [
-  { label: "conf <0.55", lo: 0, hi: 0.55 },
-  { label: "conf 0.55-0.62", lo: 0.55, hi: 0.62 },
-  { label: "conf 0.62-0.70", lo: 0.62, hi: 0.70 },
-  { label: "conf >=0.70", lo: 0.70, hi: Infinity },
-];
-
-const horizons = [5, 10, 20, 100];
-const adverse = horizons.map((h) => {
-  const vals: number[] = [];
-  for (const fill of persistedFills) {
-    const b = Number(fill.block);
-    const future = rowByBlock.get(b + h);
-    if (!future || !Number.isFinite(Number(future.mid))) continue;
-    const px = Number(fill.price), mid = Number(future.mid);
-    const signedMove = fill.side === "buy" ? mid - px : px - mid;
-    vals.push(signedMove * Number(fill.size ?? 0));
-  }
-  const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-  const win = vals.length ? vals.filter((v) => v > 0).length / vals.length : 0;
-  return { h, n: vals.length, avg, win };
-});
-
-let capRows = 0, longRows = 0, shortRows = 0, flatRows = 0;
-for (const r of rows) {
-  const size = Number(r.position?.size ?? 0);
-  const side = r.position?.side;
-  if (side === "long") longRows++;
-  else if (side === "short") shortRows++;
-  else flatRows++;
-  if (size >= 999.999) capRows++;
+function summary(label:string, xs:D[], key:keyof Pick<D,"m5"|"m10"|"m20"|"m100">="m20"){
+  const vals=xs.map(x=>x[key]).filter((x):x is number=>typeof x==="number"&&Number.isFinite(x));
+  const cap=xs.map(x=>x.captureBps).filter(Number.isFinite);
+  const adverse=xs.map(x=>x.m20!==null&&Number.isFinite(x.captureBps)?x.m20-x.captureBps:null).filter((x):x is number=>x!==null&&Number.isFinite(x));
+  console.log(`${label}: n=${xs.length} markout20=${fmt(avg(vals),3)}bps favorable=${vals.length?pct(vals.filter(x=>x>0).length/vals.length):"n/a"} capture=${fmt(avg(cap),3)}bps adverse=${fmt(avg(adverse),3)}bps`);
 }
 
-const last = rows.at(-1);
-const totals = last?.totals ?? {};
-const finalPnl = Number(totals.pnlUsd ?? 0);
-const realized = Number(totals.realizedUsd ?? 0);
-const gasUsd = Number(totals.gasUsd ?? 0);
-const gasMon = Number(totals.gasMon ?? 0);
-const hours = firstTs !== null && lastTs !== null && lastTs > firstTs ? (lastTs - firstTs) / 3_600_000 : 0;
-const fillRate = rows.length ? (fillEvents / rows.length) * 100 : 0;
-const pnlPerFill = fillEvents ? finalPnl / fillEvents : 0;
-const pnlPerHour = hours > 0 ? finalPnl / hours : 0;
-
-console.log();
-console.log("=== JEV TEST ANALYSIS ===");
-console.log("File:", FILE);
-console.log("Rows:", rows.length);
-console.log("BUY / SELL / HOLD:", buys, "/", sells, "/", holds);
-console.log("Fill events:", fillEvents);
-console.log("Fill log:", persistedFills.length ? fillFile : "legacy event-only session");
-console.log("Filled MON:", fillMon.toFixed(4));
-console.log("BUY fills:", buyFills.length, "/", buyFillMon.toFixed(4), "MON @", buyVwap.toFixed(6));
-console.log("SELL fills:", sellFills.length, "/", sellFillMon.toFixed(4), "MON @", sellVwap.toFixed(6));
-console.log("Fill rate / row:", fillRate.toFixed(3) + "%");
-if (fillDiagnostics.length) {
-  console.log("--- Fill diagnostics (edge measured 20 blocks after fill) ---");
-  summarizeDiag("BUY ", fillDiagnostics.filter((x) => x.side === "buy"));
-  summarizeDiag("SELL", fillDiagnostics.filter((x) => x.side === "sell"));
-  for (const band of confidenceBands) {
-    summarizeDiag(band.label, fillDiagnostics.filter((x) => Number.isFinite(x.confidence) && x.confidence >= band.lo && x.confidence < band.hi));
-  }
-  scanFeature("confidence", x => x.confidence, [0.55, 0.62, 0.70, 0.80, 0.90]);
-  scanFeature("spreadBps", x => x.spreadBps, [4, 5, 6, 7, 8, 10]);
-  scanFeature("bookImbalance", x => x.bookImbalance, [-0.50, -0.25, 0, 0.25, 0.50]);
-  scanFeature("ret1", x => x.ret1, [-5, -2, 0, 2, 5]);
-  scanFeature("ret5", x => x.ret5, [-10, -5, 0, 5, 10]);
-  scanFeature("ret20", x => x.ret20, [-20, -10, 0, 10, 20]);
-  scanFeature("ret100", x => x.ret100, [-50, -20, 0, 20, 50]);
-  scanFeature("cvdRatio", x => x.cvdRatio, [-0.50, -0.25, 0, 0.25, 0.50]);
-  scanCombined();
+function clusterCI(xs:D[], value:(x:D)=>number|null){
+  const buckets=new Map<number,number[]>();
+  for(const x of xs){ const v=value(x); if(v===null||!Number.isFinite(v))continue; const k=Math.floor(x.block/CLUSTER_BLOCKS); const a=buckets.get(k)??[];a.push(v);buckets.set(k,a); }
+  const means=[...buckets.values()].map(avg).filter(Number.isFinite).sort((a,b)=>a-b);
+  if(means.length<5) return {n:means.length,lo:NaN,hi:NaN};
+  return {n:means.length,lo:means[Math.floor((means.length-1)*.025)]!,hi:means[Math.ceil((means.length-1)*.975)]!};
 }
-console.log("Inventory rows long/short/flat:", longRows, "/", shortRows, "/", flatRows);
-console.log("Rows at ~1000 MON cap:", capRows, "/", rows.length, "(" + (rows.length ? (capRows / rows.length * 100).toFixed(2) : "0.00") + "%)");
-for (const x of adverse) console.log(`Post-fill edge +${x.h} blocks: n=${x.n} avgUSD/fill=${x.avg.toFixed(6)} favorable=${(x.win * 100).toFixed(1)}%`);
-console.log("Duration:", hours.toFixed(4), "hours");
-console.log("Realized P&L USD:", realized.toFixed(6));
-console.log("Gas:", gasUsd.toFixed(6), "USD /", gasMon.toFixed(6), "MON");
-console.log("Min P&L USD:", (Number.isFinite(minPnl) ? minPnl : 0).toFixed(6));
-console.log("Max P&L USD:", (Number.isFinite(maxPnl) ? maxPnl : 0).toFixed(6));
-console.log("Max drawdown USD:", maxDrawdown.toFixed(6));
-console.log("Final NET P&L USD:", finalPnl.toFixed(6));
-console.log("Net P&L / fill USD:", pnlPerFill.toFixed(6));
-console.log("Net P&L / hour USD:", pnlPerHour.toFixed(6));
-console.log("=========================");
-console.log();
+
+const firstTs=Number(rows[0]?.ts), lastTs=Number(rows.at(-1)?.ts);
+const hours=Number.isFinite(firstTs)&&Number.isFinite(lastTs)&&lastTs>firstTs?(lastTs-firstTs)/3_600_000:NaN;
+const last=rows.at(-1)?.totals??{};
+const realized=Number(last.realizedUsd??0), markToMid=Number(last.pnlUsd??0), gas=Number(last.gasUsd??0), ai=Number(last.jevUsd??0);
+const notional=fills.reduce((s:number,f:any)=>s+Number(f.size??0)*Number(f.price??0),0);
+const makerFees=notional*MAKER_FEE_BPS/1e4;
+const afterFeeScenario=markToMid-makerFees-ai;
+
+console.log("\n=== JEV MEASUREMENT-RELIABILITY ANALYSIS ===");
+console.log("Events:",FILE,"rows=",rows.length);
+console.log("Fills:",fills.length, existsSync(fillFile) ? fillFile : "event/legacy");
+console.log("Duration hours:",fmt(hours,3));
+if(missingPlacement) console.warn("WARNING: placement not reconstructed for",missingPlacement,"fills");
+if(missingFeatures) console.warn("WARNING: placement features unavailable for",missingFeatures,"fills; feature scans are not trustworthy for those fills.");
+console.log("\n--- Execution decomposition (bps, placement-time features) ---");
+summary("ALL",diags); summary("BUY",diags.filter(x=>x.side==="buy")); summary("SELL",diags.filter(x=>x.side==="sell"));
+for(const reason of [...new Set(diags.map(x=>x.reason))]) summary("reason="+reason,diags.filter(x=>x.reason===reason));
+for(const h of [5,10,20,100] as const){
+  const key=("m"+h) as "m5"|"m10"|"m20"|"m100"; const vals=diags.map(x=>x[key]).filter((x):x is number=>x!==null);
+  console.log(`markout +${h}: ${fmt(avg(vals),3)}bps n=${vals.length}`);
+}
+const ci=clusterCI(diags,x=>x.m20);
+console.log(`cluster CI (~${CLUSTER_BLOCKS} blocks) markout20: clusters=${ci.n} 2.5%-97.5%=[${fmt(ci.lo,3)}, ${fmt(ci.hi,3)}] bps`);
+
+console.log("\n--- Placement feature checks ---");
+const feature=(name:string,get:(x:D)=>number)=>{
+  const good=diags.filter(x=>Number.isFinite(get(x))); if(!good.length){console.warn("MISSING FEATURE:",name);return;}
+  const sorted=[...good].sort((a,b)=>get(a)-get(b)); const thirds=[sorted.slice(0,Math.floor(sorted.length/3)),sorted.slice(Math.floor(sorted.length/3),Math.floor(2*sorted.length/3)),sorted.slice(Math.floor(2*sorted.length/3))];
+  thirds.forEach((g,i)=>summary(`${name} tercile ${i+1}`,g));
+};
+feature("confidence",x=>x.confidence); feature("spread",x=>x.spread); feature("imbalance",x=>x.imbalance); feature("ret20",x=>x.ret20); feature("cvdRatio",x=>x.cvdRatio);
+
+console.log("\n--- Chronological out-of-sample view ---");
+const sorted=[...diags].sort((a,b)=>a.block-b.block), n=sorted.length;
+[["train",0,.6],["validation",.6,.8],["test",.8,1]].forEach(([label,a,b])=>summary(String(label),sorted.slice(Math.floor(n*Number(a)),Math.floor(n*Number(b)))));
+
+console.log("\n--- P&L labels (do not confuse these) ---");
+console.log("Realized trading P&L USD:",fmt(realized,6));
+console.log("Mark-to-mid P&L USD (realized + unrealized - logged gas):",fmt(markToMid,6));
+console.log("Logged gas USD:",fmt(gas,6));
+console.log("AI cost USD:",fmt(ai,6));
+console.log("Maker fee scenario:",MAKER_FEE_BPS,"bps =>",fmt(makerFees,6),"USD");
+console.log("Mark-to-mid after maker-fee scenario and AI cost:",fmt(afterFeeScenario,6),"USD");
+console.log("BANKROLL_USD is only the denominator used by the bot for pnlPct; it does not create the dollar P&L.");
+console.log("================================================\n");
