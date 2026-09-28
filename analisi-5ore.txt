@@ -1,0 +1,51 @@
+
+=== JEV MEASUREMENT-RELIABILITY ANALYSIS ===
+Events: data/events_2026-09-28T14-31-21-032Z.jsonl rows= 50061
+Fills: 2120 data/fills_2026-09-28T14-31-21-032Z.jsonl
+Duration hours: 4.214
+
+--- Execution decomposition (bps, placement-time features) ---
+ALL: n=2120 markout20=-0.018bps favorable=49.5% capture=3.813bps adverse=-3.831bps
+BUY: n=1062 markout20=-0.413bps favorable=48.7% capture=3.430bps adverse=-3.843bps
+SELL: n=1058 markout20=0.377bps favorable=50.3% capture=4.197bps adverse=-3.819bps
+reason=signal: n=1685 markout20=0.648bps favorable=51.0% capture=4.048bps adverse=-3.400bps
+reason=reduce_pressure: n=355 markout20=-2.460bps favorable=43.4% capture=2.901bps adverse=-5.361bps
+reason=reduce_weak: n=80 markout20=-3.230bps favorable=45.0% capture=2.898bps adverse=-6.128bps
+markout +5: -0.289bps n=2120
+markout +10: 0.103bps n=2120
+markout +20: -0.018bps n=2120
+markout +100: -0.072bps n=2120
+cluster CI (~600 blocks) markout20: clusters=84 2.5%-97.5%=[-4.035, 5.312] bps
+
+--- Placement feature checks ---
+confidence tercile 1: n=706 markout20=-0.453bps favorable=49.9% capture=3.036bps adverse=-3.490bps
+confidence tercile 2: n=707 markout20=-0.226bps favorable=48.9% capture=3.199bps adverse=-3.425bps
+confidence tercile 3: n=707 markout20=0.623bps favorable=49.6% capture=5.202bps adverse=-4.579bps
+spread tercile 1: n=706 markout20=-1.381bps favorable=43.1% capture=1.129bps adverse=-2.510bps
+spread tercile 2: n=707 markout20=0.346bps favorable=51.9% capture=2.848bps adverse=-2.502bps
+spread tercile 3: n=707 markout20=0.978bps favorable=53.5% capture=7.458bps adverse=-6.480bps
+imbalance tercile 1: n=706 markout20=1.261bps favorable=50.4% capture=4.502bps adverse=-3.241bps
+imbalance tercile 2: n=707 markout20=-0.845bps favorable=47.1% capture=3.046bps adverse=-3.891bps
+imbalance tercile 3: n=707 markout20=-0.470bps favorable=50.9% capture=3.891bps adverse=-4.361bps
+ret20 tercile 1: n=706 markout20=0.377bps favorable=50.0% capture=5.031bps adverse=-4.654bps
+ret20 tercile 2: n=707 markout20=-1.996bps favorable=45.3% capture=2.765bps adverse=-4.761bps
+ret20 tercile 3: n=707 markout20=1.564bps favorable=53.2% capture=3.644bps adverse=-2.080bps
+cvdRatio tercile 1: n=706 markout20=-0.493bps favorable=48.0% capture=4.518bps adverse=-5.011bps
+cvdRatio tercile 2: n=706 markout20=0.191bps favorable=51.6% capture=3.210bps adverse=-3.019bps
+cvdRatio tercile 3: n=706 markout20=0.259bps favorable=48.9% capture=3.707bps adverse=-3.447bps
+
+--- Chronological out-of-sample view ---
+train: n=1272 markout20=0.112bps favorable=49.0% capture=4.215bps adverse=-4.103bps
+validation: n=424 markout20=0.148bps favorable=52.4% capture=3.275bps adverse=-3.127bps
+test: n=424 markout20=-0.577bps favorable=48.1% capture=3.143bps adverse=-3.720bps
+
+--- P&L labels (do not confuse these) ---
+Realized trading P&L USD: -0.551300
+Mark-to-mid P&L USD (realized + unrealized - logged gas): -0.542600
+Logged gas USD: 0.000000
+AI cost USD: 0.672838
+Maker fee scenario: 0 bps => 0.000000 USD
+Mark-to-mid after maker-fee scenario and AI cost: -1.215438 USD
+BANKROLL_USD is only the denominator used by the bot for pnlPct; it does not create the dollar P&L.
+================================================
+
