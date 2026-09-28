@@ -63,7 +63,12 @@ type FillDiag = {
   side: "buy" | "sell";
   confidence: number;
   spreadBps: number;
-  bookImbalance: number;\n  ret1: number;\n  ret5: number;\n  ret20: number;\n  ret100: number;\n  cvdRatio: number;\n  edge10: number | null;
+  bookImbalance: number;
+  ret1: number;
+  ret5: number;
+  ret20: number;
+  ret100: number;
+  cvdRatio: number;\n  edge10: number | null;
   edge20: number | null;
 };
 
