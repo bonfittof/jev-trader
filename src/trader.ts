@@ -215,7 +215,7 @@ export class Trader {
       const o = this.orders.get(f.orderId);
       if (f.updatedSize <= 0) this.orders.delete(f.orderId);
       else if (o) o.size = f.updatedSize;
-      out.push({ side: f.side, size: f.size, price: f.price, txHash: f.txHash, orderId: f.orderId, simulated: false, block: f.block, placementBlock: o?.block ?? null, orderAgeBlocks: o ? f.block - o.block : null, reason: o?.reason ?? null, placementConfidence: o?.confidence ?? null, placementFeatures: o?.features ?? null, positionBefore: o?.positionBefore ?? null });
+      out.push({ side: f.side, size: f.size, price: f.price, txHash: f.txHash, orderId: f.orderId, simulated: false, block: f.block, placementBlock: o?.block ?? null, orderAgeBlocks: o ? f.block - o.block : null, reason: o?.reason ?? null, placementConfidence: o?.confidence ?? null, placementFeatures: o?.features ?? null, positionBefore: o?.positionBefore ?? null } as Fill & { block: number });
     }
     return out;
   }
